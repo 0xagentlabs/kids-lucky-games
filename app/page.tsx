@@ -27,6 +27,11 @@ export default function Home() {
   const [prizes, setPrizes] = useState<Prize[]>(defaultPrizes);
   const [draft, setDraft] = useState<Prize[]>(defaultPrizes);
   const [adminOpen, setAdminOpen] = useState(false);
+  const [adminView, setAdminView] = useState<"checking" | "login" | "change" | "settings">("checking");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [adminError, setAdminError] = useState("");
+  const [adminBusy, setAdminBusy] = useState(false);
   const [usedToday, setUsedToday] = useState(false);
   const [result, setResult] = useState<Prize | null>(null);
   const [spinning, setSpinning] = useState(false);
@@ -89,22 +94,78 @@ export default function Home() {
     }
   }
 
+  async function openAdmin() {
+    setAdminOpen(true); setAdminView("checking"); setAdminError("");
+    const response = await fetch("/api/admin/session", { cache: "no-store" });
+    const data = await response.json();
+    setAdminView(data.authenticated ? (data.mustChangePassword ? "change" : "settings") : "login");
+  }
+
+  async function loginAdmin(event: React.FormEvent) {
+    event.preventDefault(); setAdminBusy(true); setAdminError("");
+    const response = await fetch("/api/admin/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: "admin", password: adminPassword }) });
+    const data = await response.json(); setAdminBusy(false);
+    if (!response.ok) { setAdminError(data.error || "登录失败，请重试"); return; }
+    setAdminPassword(""); setAdminView(data.mustChangePassword ? "change" : "settings");
+  }
+
+  async function changeAdminPassword(event: React.FormEvent) {
+    event.preventDefault(); setAdminBusy(true); setAdminError("");
+    const response = await fetch("/api/admin/session", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: newPassword }) });
+    const data = await response.json(); setAdminBusy(false);
+    if (!response.ok) { setAdminError(data.error || "密码修改失败"); return; }
+    setNewPassword(""); setAdminView("settings"); setMessage("管理员密码已更新");
+  }
+
+  async function logoutAdmin() {
+    await fetch("/api/admin/session", { method: "DELETE" });
+    setAdminOpen(false); setAdminView("login");
+  }
+
   async function saveRules() {
     const total = draft.reduce((sum, p) => sum + Number(p.chance), 0);
     if (total !== 100 || draft.some(p => !p.name.trim() || p.chance < 0)) { setMessage("奖品概率合计必须等于 100%"); return; }
     const response = await fetch("/api/game", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ prizes: draft }) });
-    if (response.ok) { setPrizes(draft); setAdminOpen(false); setMessage("规则保存成功，下一次抽奖生效"); }
+    const data = await response.json();
+    if (response.ok) { setPrizes(data.prizes); setDraft(data.prizes); setAdminOpen(false); setMessage("规则已保存到数据库，下一次抽奖生效"); }
+    else setAdminError(data.error || "保存失败，请重试");
   }
 
   const cardSymbols = ["star", "heart", "bolt"];
 
   return <main>
-    <header><a className="brand" href="#top" aria-label="星愿乐园首页"><span className="logo">{icons.gift}</span><span><b>星愿乐园</b><small>LUCKY CLUB</small></span></a><div className="headerActions"><span className="dailyPill"><i/>今日机会 <b>{usedToday ? 0 : 1}</b>/1</span><button className="iconButton" onClick={() => setAdminOpen(true)} aria-label="打开规则设置">{icons.settings}</button></div></header>
+    <header><a className="brand" href="#top" aria-label="星愿乐园首页"><span className="logo">{icons.gift}</span><span><b>星愿乐园</b><small>LUCKY CLUB</small></span></a><div className="headerActions"><span className="dailyPill"><i/>今日机会 <b>{usedToday ? 0 : 1}</b>/1</span><button className="iconButton" onClick={openAdmin} aria-label="打开管理员设置">{icons.settings}</button></div></header>
     <section className="intro" id="top"><div className="kicker"><span>★</span>每日一份小惊喜</div><h1>今天，幸运会<br/><em>落在谁身上？</em></h1><p>{message}</p></section>
     <nav className="gameTabs" aria-label="选择小游戏"><button className={game === "wheel" ? "active" : ""} onClick={() => { setGame("wheel"); setResult(null); }}><span>{icons.wheel}</span><b>幸运转盘</b><small>转一转，好运来</small></button><button className={game === "match" ? "active" : ""} onClick={() => { setGame("match"); setResult(null); resetMatch(); }}><span>{icons.match}</span><b>快乐对对碰</b><small>翻一翻，找朋友</small></button></nav>
     <section className="playground" aria-live="polite"><div className="cloud cloudOne"/><div className="cloud cloudTwo"/>{game === "wheel" ? <div className="wheelGame"><div className="pointer" aria-hidden="true"/><div className="wheelShell"><div className="wheel" style={{ background: gradient, transform: `rotate(${rotation}deg)` }}>{prizes.map((p, i) => <span className="wheelLabel" key={p.id} style={{ transform: `rotate(${i * (360 / prizes.length) + 36}deg)` }}>{p.name}</span>)}<div className="wheelCenter">★</div></div></div><button className="playButton" disabled={usedToday || spinning} onClick={drawPrize}>{spinning ? "转动中…" : usedToday ? "明天再来" : "开始转动"}</button></div> : <div className="matchGame"><div className="matchGrid">{cards.map((value, index) => { const shown = opened.includes(index) || matched.includes(index); return <button key={index} className={`matchCard ${shown ? "flipped" : ""} ${matched.includes(index) ? "matched" : ""}`} onClick={() => flipCard(index)} aria-label={shown ? `卡片：${cardSymbols[value]}` : `翻开第 ${index + 1} 张卡片`} disabled={usedToday || matched.includes(index)}><span className={`symbol ${cardSymbols[value]}`}/><i>?</i></button>; })}</div><button className="playButton secondary" onClick={resetMatch} disabled={usedToday}>{usedToday ? "明天再来" : "重新排列"}</button></div>}{result && <div className="result"><span>{icons.gift}</span><div><small>恭喜你获得</small><strong>{result.name}</strong></div></div>}</section>
     <section className="rules"><h2>简单三步，收获快乐</h2><div><article><b>1</b><span>选择游戏<small>挑一个喜欢的小游戏</small></span></article><article><b>2</b><span>完成挑战<small>转转盘或完成对对碰</small></span></article><article><b>3</b><span>领取惊喜<small>每天都有一次机会</small></span></article></div></section>
-    {adminOpen && <div className="modalBackdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setAdminOpen(false); }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="admin-title"><button className="close" onClick={() => setAdminOpen(false)} aria-label="关闭">×</button><div className="modalTitle"><span>{icons.settings}</span><div><h2 id="admin-title">抽奖规则设置</h2><p>配置奖品名称与中奖概率</p></div></div><div className="notice">每日限制：每位访客每天最多参与 1 次</div><div className="prizeEditor">{draft.map((p, i) => <div className="prizeRow" key={p.id}><i style={{ background: p.color }}/><label>奖品 {i + 1}<input value={p.name} onChange={e => setDraft(d => d.map(x => x.id === p.id ? {...x, name:e.target.value} : x))}/></label><label>中奖概率<div className="percent"><input type="number" min="0" max="100" value={p.chance} onChange={e => setDraft(d => d.map(x => x.id === p.id ? {...x, chance:Number(e.target.value)} : x))}/><span>%</span></div></label></div>)}</div><div className="total">概率合计 <b className={draft.reduce((s,p)=>s+p.chance,0) === 100 ? "valid" : "invalid"}>{draft.reduce((s,p)=>s+p.chance,0)}%</b></div><button className="saveButton" onClick={saveRules}>保存规则</button></section></div>}
+    {adminOpen && <div className="modalBackdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setAdminOpen(false); }}>
+      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="admin-title">
+        <button className="close" onClick={() => setAdminOpen(false)} aria-label="关闭">×</button>
+        <div className="modalTitle"><span>{icons.settings}</span><div><h2 id="admin-title">管理员设置</h2><p>{adminView === "settings" ? "配置奖品名称与中奖概率" : "仅 admin 用户可以修改规则"}</p></div></div>
+        {adminView === "checking" && <div className="adminLoading" role="status">正在检查登录状态…</div>}
+        {adminView === "login" && <form className="adminForm" onSubmit={loginAdmin}>
+          <label>用户名<input value="admin" readOnly autoComplete="username" /></label>
+          <label>密码<input type="password" value={adminPassword} onChange={e => setAdminPassword(e.target.value)} autoComplete="current-password" required autoFocus /></label>
+          {adminError && <p className="formError" role="alert">{adminError}</p>}
+          <button className="saveButton" disabled={adminBusy}>{adminBusy ? "正在登录…" : "登录并进入设置"}</button>
+        </form>}
+        {adminView === "change" && <form className="adminForm" onSubmit={changeAdminPassword}>
+          <div className="notice warning">首次登录必须设置新密码后才能修改抽奖规则。</div>
+          <label>新密码<input type="password" minLength={10} maxLength={128} value={newPassword} onChange={e => setNewPassword(e.target.value)} autoComplete="new-password" aria-describedby="password-help" required autoFocus /></label>
+          <small id="password-help">至少 10 个字符，建议混合字母、数字和符号。</small>
+          {adminError && <p className="formError" role="alert">{adminError}</p>}
+          <button className="saveButton" disabled={adminBusy}>{adminBusy ? "正在保存…" : "设置新密码"}</button>
+        </form>}
+        {adminView === "settings" && <>
+          <div className="notice">规则和中奖比例已由后端数据库统一管理，每位访客每天最多参与 1 次。</div>
+          <div className="prizeEditor">{draft.map((p, i) => <div className="prizeRow" key={p.id}><i style={{ background: p.color }}/><label>奖品 {i + 1}<input value={p.name} onChange={e => setDraft(d => d.map(x => x.id === p.id ? {...x, name:e.target.value} : x))}/></label><label>中奖概率<div className="percent"><input type="number" min="0" max="100" value={p.chance} onChange={e => setDraft(d => d.map(x => x.id === p.id ? {...x, chance:Number(e.target.value)} : x))}/><span>%</span></div></label></div>)}</div>
+          <div className="total">概率合计 <b className={draft.reduce((s,p)=>s+p.chance,0) === 100 ? "valid" : "invalid"}>{draft.reduce((s,p)=>s+p.chance,0)}%</b></div>
+          {adminError && <p className="formError" role="alert">{adminError}</p>}
+          <div className="adminActions"><button className="logoutButton" onClick={logoutAdmin}>退出登录</button><button className="saveButton" onClick={saveRules}>保存到数据库</button></div>
+        </>}
+      </section>
+    </div>}
     <footer><span className="logo mini">{icons.gift}</span><b>星愿乐园</b><p>每一份好运，都值得期待</p></footer>
   </main>;
 }
