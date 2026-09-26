@@ -52,8 +52,8 @@ export default function Home() {
   }, []);
 
   const wheelSegments = useMemo(() => {
-    let at = 0;
-    return prizes.map(prize => { const start = at; at += prize.chance * 3.6; return { ...prize, start, end: at, angle: start + prize.chance * 1.8 }; });
+    const size = 360 / prizes.length;
+    return prizes.map((prize, index) => ({ ...prize, start: index * size, end: (index + 1) * size, angle: (index + .5) * size }));
   }, [prizes]);
   const gradient = `conic-gradient(${wheelSegments.map(p => `${p.color} ${p.start}deg ${p.end}deg`).join(",")})`;
   const usedToday = remainingToday <= 0;
@@ -78,11 +78,18 @@ export default function Home() {
       }
       const prize = data.prize as Prize;
       const index = prizes.findIndex(p => p.id === prize.id);
-      setRotation(v => v + 1800 + (360 - (wheelSegments[index]?.angle || 0)));
+      if (index < 0) throw new Error("中奖结果与当前奖项不一致，请刷新后重试");
+      const target = (360 - wheelSegments[index].angle + 360) % 360;
+      setRotation(current => {
+        const currentPosition = ((current % 360) + 360) % 360;
+        const alignment = (target - currentPosition + 360) % 360;
+        return current + 2160 + alignment;
+      });
+      const spinDuration = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 80 : 5600;
       setTimeout(() => {
         setResult(prize); setRemainingToday(data.remainingToday); setSpinning(false);
         setMessage(`太棒了！你获得了「${prize.name}」`);
-      }, 2400);
+      }, spinDuration);
     } catch (error) {
       setSpinning(false);
       setMessage(error instanceof Error ? error.message : "稍后再试试");
